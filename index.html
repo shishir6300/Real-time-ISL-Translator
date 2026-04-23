@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sign Language Detection</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="flex justify-center items-center h-screen bg-gradient-to-br from-gray-900 to-gray-700 p-4">
+
+<div class="flex w-full max-w-7xl h-full gap-4">
+
+    <!-- Left Section: Video Streaming -->
+    <div class="w-1/2 flex flex-col bg-gradient-to-r from-blue-500 to-purple-500 shadow-xl rounded-lg p-4 border border-gray-300">
+        <h2 class="text-xl font-bold text-center text-white mb-2">Live Hand Detection</h2>
+        <div class="flex justify-center items-center w-full h-full bg-gray-300 rounded-lg border-4 border-blue-300 shadow-lg">
+            <video id="video" autoplay class="w-full h-full object-cover rounded-lg"></video>
+        </div>
+        <div id="result" class="mt-2 text-lg font-bold text-center text-white bg-blue-600 py-1 px-4 rounded-lg shadow-md">
+            Waiting for detection...
+        </div>
+    </div>
+
+    <!-- Right Section: Detection + Translation -->
+    <div class="w-1/2 flex flex-col bg-white/90 backdrop-blur-lg shadow-xl rounded-lg p-4 border border-gray-300 h-full">
+        <div class="h-1/2 bg-gradient-to-r from-purple-500 to-indigo-500 shadow-md rounded-lg p-3 border border-gray-300 mb-4 flex flex-col">
+            <h1 class="text-lg font-bold text-white text-center">Detection Result</h1>
+
+            <h3 class="text-white text-sm mt-2">Word Suggestions</h3>
+            <div id="suggestions" class="flex flex-wrap gap-1 py-1 text-sm text-brown-300">
+                No suggestions
+            </div>
+
+            <h3 class="text-white text-sm mt-2">Current Word</h3>
+            <div id="current-word" class="text-sm font-bold text-black-300 py-1">None</div>
+
+            <h3 class="text-white text-sm mt-2">Sentence</h3>
+            <div id="sentence" class="text-sm font-bold text-pink-300 py-1">Start signing...</div>
+
+            <button id="clear-btn" class="mt-3 w-full px-4 py-1 text-white bg-red-500 rounded-lg shadow-md hover:bg-red-700">
+                Clear
+            </button>
+        </div>
+
+        <div class="h-1/2 bg-gradient-to-r from-indigo-500 to-blue-500 shadow-md rounded-lg p-3 border border-gray-300 flex flex-col">
+            <h1 class="text-lg font-bold text-white text-center">Translation</h1>
+
+            <h3 class="text-white text-sm mt-2">Detected Sentence</h3>
+            <input id="editable-sentence" class="w-full p-1 border border-gray-300 rounded text-sm bg-gray-100 shadow-sm mt-1" type="text"/>
+
+            <h3 class="text-white text-sm mt-2">Select Language</h3>
+<select id="language" class="w-full p-1 border border-gray-300 rounded text-sm bg-gray-100 shadow-sm mt-1">
+    <option value="en">English</option>
+    <option value="hi-IN">Hindi</option>
+    <option value="te-IN">Telugu</option>
+    <option value="bn-IN">Bengali</option>
+    <option value="ta-IN">Tamil</option>
+    <option value="kn-IN">Kannada</option>
+    <option value="mr-IN">Marathi</option>
+    <option value="gu-IN">Gujarati</option>
+    <option value="ml-IN">Malayalam</option>
+    <option value="pa-IN">Punjabi</option>
+    <option value="ur-IN">Urdu</option>
+</select>
+
+
+            <div class="flex justify-between mt-auto">
+                <button id="translate-btn" class="w-[48%] px-2 py-1 text-white bg-green-500 rounded-lg shadow-md hover:bg-green-700">
+                    Translate
+                </button>
+                <button id="speak-btn" class="w-[48%] px-2 py-1 text-white bg-purple-500 rounded-lg shadow-md hover:bg-purple-700">
+                    Speak
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+<script>
+    const video = document.getElementById('video');
+    const result = document.getElementById('result');
+    const suggestionsDiv = document.getElementById('suggestions');
+    const currentWordDiv = document.getElementById('current-word');
+    const sentenceDiv = document.getElementById('sentence');
+    const editableSentence = document.getElementById('editable-sentence');
+    const languageSelect = document.getElementById('language');
+
+    let currentWord = '';
+    let sentence = '';
+
+    navigator.mediaDevices.getUserMedia({ video: true }).then(stream => video.srcObject = stream);
+
+    async function captureAndPredict() {
+        const canvas = document.createElement('canvas');
+        canvas.width = video.videoWidth || 300;
+        canvas.height = video.videoHeight || 300;
+        canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg'));
+        const formData = new FormData();
+        formData.append('file', blob, 'frame.jpg');
+
+        const res = await fetch('/predict', { method: 'POST', body: formData });
+        const { detected_class } = await res.json();
+
+        if (detected_class && detected_class !== '-') {
+            result.textContent = `Detected: ${detected_class}`;
+            fetchSuggestions(currentWord + detected_class);
+        }
+    }
+
+    async function fetchSuggestions(partialWord) {
+        const res = await fetch('/suggestions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ current_word: partialWord })
+        });
+
+        const { suggestions } = await res.json();
+        const allSuggestions = [partialWord.slice(-1), ...suggestions];
+
+        suggestionsDiv.innerHTML = allSuggestions.map(word => `
+            <span class="cursor-pointer px-2 py-1 bg-gray-200 rounded hover:bg-green-500"
+                onclick="selectWord('${word}')">${word}</span>
+        `).join('');
+    }
+
+    // Updated - Build current word step by step
+    function selectWord(word) {
+        currentWord += word;  // Append clicked suggestion to current word
+        updateCurrentWordDisplay();
+        suggestionsDiv.innerHTML = '';  // Clear suggestions until next detection
+    }
+
+    // Updated - Make current word clickable (confirm word into sentence)
+    function updateCurrentWordDisplay() {
+        if (currentWord) {
+            currentWordDiv.innerHTML = `
+                <span class="cursor-pointer bg-blue-200 px-2 py-1 rounded hover:bg-blue-400"
+                    onclick="confirmCurrentWord()">${currentWord}</span>
+            `;
+        } else {
+            currentWordDiv.textContent = 'None';
+        }
+    }
+
+    // Updated - Add current word to sentence and reset current word
+    function confirmCurrentWord() {
+        if (currentWord) {
+            if (sentence) sentence += ' ';
+            sentence += currentWord;
+
+            sentenceDiv.textContent = sentence;
+            editableSentence.value = sentence;
+
+            currentWord = '';  // Reset current word after confirming
+            updateCurrentWordDisplay();
+
+            fetchSuggestions('');  // Fetch suggestions for next word (new context)
+        }
+    }
+
+    function clearAll() {
+        currentWord = '';
+        sentence = '';
+        currentWordDiv.textContent = 'None';
+        sentenceDiv.textContent = 'Start signing...';
+        editableSentence.value = '';
+        suggestionsDiv.innerHTML = 'No suggestions';
+    }
+
+    async function translateText() {
+        const text = editableSentence.value.trim();
+        if (!text) return alert('Enter text to translate!');
+
+        const lang = languageSelect.value;
+        const res = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=en|${lang}`);
+        const data = await res.json();
+        editableSentence.value = data.responseData.translatedText || 'Translation failed';
+    }
+
+    async function speakText() {
+        const text = editableSentence.value.trim();
+        if (!text) return alert('Enter text to speak!');
+
+        const language = languageSelect.value;
+        const res = await fetch('/speak', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text, language })
+        });
+
+        const { audio_url, error } = await res.json();
+        if (audio_url) new Audio(audio_url).play();
+        else alert('Speech generation failed: ' + (error || 'Unknown error'));
+    }
+
+    setInterval(captureAndPredict, 1000);
+
+    document.getElementById('clear-btn').onclick = clearAll;
+    document.getElementById('translate-btn').onclick = translateText;
+    document.getElementById('speak-btn').onclick = speakText;
+</script>
+
+</body>
+</html>
